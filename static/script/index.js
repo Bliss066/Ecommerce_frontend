@@ -27,10 +27,9 @@ const Login = async() =>{
 
 // This is the logout function it clears the access token, refresh token, and customer id from the cookies
 const Logout = async () => {
-    const secureCookieOptions = { secure: true, sameSite: 'Strict' };
-    document.cookie = `access=; expires=Thu, 01 Jan 1970 00:00:00 UTC; ${secureCookieOptions}`;
-    document.cookie = `refresh=; expires=Thu, 01 Jan 1970 00:00:00 UTC; ${secureCookieOptions}`;
-    document.cookie = `customerId=; expires=Thu, 01 Jan 1970 00:00:00 UTC; ${secureCookieOptions}`;
+    document.cookie = `access=; expires=Thu, 01 Jan 1970 00:00:00 UTC; samesite=None; secure=true`;
+    document.cookie = `refresh=; expires=Thu, 01 Jan 1970 00:00:00 UTC; samesite=None; secure=true`;
+    document.cookie = `customerId=; expires=Thu, 01 Jan 1970 00:00:00 UTC; samesite=None; secure=true`;
 };
 
 // This is the getToken function that gets the access token and refresh token from the server then stores it in the cookies
@@ -55,12 +54,11 @@ const getTokens = async (loginDetails) => {
         // Decode the access token to get the customer id
         const decodedToken = jwtDecode(object.access);
 
-        const secureCookieOptions = { secure: true, sameSite: 'Strict' };
         const expires = new Date(decodedToken.exp * 1000).toUTCString(); // Set expiration based on token expiration
 
-        document.cookie = `access=${object.access}; ${secureCookieOptions} expires=${expires};`;
-        document.cookie = `refresh=${object.refresh}; ${secureCookieOptions} expires=${expires}`;
-        document.cookie = `customerId=${decodedToken.customerId}; ${secureCookieOptions}`;
+        document.cookie = `access=${object.access}; samesite=None; secure=true expires=${expires};`;
+        document.cookie = `refresh=${object.refresh}; samesite=None; secure=true expires=${expires}`;
+        document.cookie = `customerId=${decodedToken.customerId}; samesite=None; secure=true`;
 
         console.log('User logged in successfully');
         return object;
@@ -71,7 +69,6 @@ const getTokens = async (loginDetails) => {
 
 // Refresh the access token. 
 async function Token_refresh(refresh){
-    const cookies = document.cookie.split(';');
 
     const url = 'https://type-web-production.up.railway.app/token/refresh/';
 
@@ -87,6 +84,7 @@ async function Token_refresh(refresh){
         })
 
         if (response.status !== 200){
+            // if invalid refresh token it stops the refreshing process
             clearInterval(guestUserLogicInterval); 
             throw new Error ('could not fetch new tokens');
         }
@@ -95,12 +93,11 @@ async function Token_refresh(refresh){
         // Decode the access token to get the customer id
         const decodedToken = jwtDecode(object.access);
 
-        const secureCookieOptions = { secure: true, sameSite: 'Strict' };
         const expires = new Date(decodedToken.exp * 300000).toUTCString(); // Set expiration based on token expiration
 
-        document.cookie = `access=${object.access}; ${secureCookieOptions} expires=${expires};`;
-        document.cookie = `refresh=${object.refresh}; ${secureCookieOptions}`;
-        document.cookie = `customerId=${decodedToken.customerId}; ${secureCookieOptions}`;
+        document.cookie = `access=${object.access}; samesite=None; secure=true expires=${expires};`;
+        document.cookie = `refresh=${object.refresh}; samesite=None; secure=true`;
+        document.cookie = `customerId=${decodedToken.customerId}; samesite=None; secure=true`;
         
         return object;
     } catch (error) {
@@ -118,12 +115,11 @@ const guestUserLogic = async () => {
         const cookies = document.cookie.split(';');
         const accessToken = cookies.find(cookie => cookie.includes('access'));
         const refreshToken = cookies.find(cookie => cookie.includes('refresh'));
-        const refresh = refreshToken ? refreshToken.split('=')[1] : null;
         const customerId = cookies.find(cookie => cookie.includes('customerId'));
         const customer_id = customerId ? customerId.split('=')[1] : null; // Remove the '=' sign from the customerId
 
         // if there is no access or refresh token in the cookies
-        if (!accessToken || !refreshToken) {
+        if ((!accessToken || !refreshToken) || (!accessToken.split('=')[1] || !refreshToken.split('=')[1])) {
             // check if there is a customer ID in the cookies
             if (!customer_id) {
                 // If not, show popup to ask to login or continue as guest user
@@ -133,9 +129,8 @@ const guestUserLogic = async () => {
                 // User has a customer ID, fetch guest user details if needed
                 try {
                     const guest = await getCustomerDetails(customer_id);
-                    // if not guest, return false
-                    if  (!guest){
-                        return false;
+                    if(!guest) {
+                        return false; // Indicate that the logic was not successful
                     }
                     // if guest user is not a guest, clear the access token and refresh token then show popup
                     if (guest.data.is_guest === false) {
@@ -150,7 +145,7 @@ const guestUserLogic = async () => {
             }
         }
         // if there is an access token and refresh token in the cookies
-        else if (refreshToken && accessToken){
+        else if ((refreshToken && accessToken) && (refreshToken.split('=')[1] && accessToken.split('=')[1])) {
            
             // User has an access token, check if the access token has expired
             if (isAccessTokenExpired(accessToken.split('=')[1])) {
@@ -163,6 +158,8 @@ const guestUserLogic = async () => {
                     }
                 } catch (error) {
                     console.error('Error refreshing token: ', error);
+                    await Logout();
+                    await popUp();
                     return false; // Indicate that the logic was not successful
                 }
             }
@@ -177,8 +174,7 @@ const guestUserLogic = async () => {
             if (customer_id !== jwtDecode(accessToken).customerId) {
                 console.log('Customer ID does not match Resetting customer ID');
                 // if not reset customer ID
-                const secureCookieOptions = { secure: true, sameSite: 'Strict' };
-                document.cookie = `customerId=${jwtDecode(accessToken).customerId}; ${secureCookieOptions}`;
+                document.cookie = `customerId=${jwtDecode(accessToken).customerId}; samesite=None; secure=true`;
             }
         }
 
@@ -199,11 +195,24 @@ const popUp = async() => {
     // calls the createGuestUser function to create a new guest user
     guest.addEventListener('click', async (event) => {
         event.preventDefault();
-        await createGuestUser();
+        try {
+            const guest = await createGuestUser();
+            if (guest){
+                await closePopup();
+            }
+        } catch (error) {
+            console.error(error);
+        }
     });
     // calls the login function to login as a user
     login.addEventListener('click', async (event) => {
         event.preventDefault();
+        try {
+            await Login();
+            await closePopup();
+        } catch (error) {
+            console.error(error);
+        }
         await Login();
     });
     // calls the closePopup function to close the popup
@@ -237,11 +246,9 @@ const getCustomerDetails = async(customerId) => {
         };
 
         const object = await response.json();
-        await closePopup();
-        const secureCookieOptions = { secure: true, sameSite: 'Strict' };
 
         // Stores the customer id in the cookies
-        document.cookie = `customerId=${object.data.customerId}; ${secureCookieOptions}`;
+        document.cookie = `customerId=${object.data.customerId}; samesite=None; secure=true`;
 
         return object;
 
@@ -265,12 +272,11 @@ const createGuestUser = async() =>{
         if (!response.ok) {
             throw new Error('could not create customer');
         }
-        await closePopup();
+
         const object = await response.json();
-        const secureCookieOptions = { secure: true, sameSite: 'Strict' };
 
         // Stores the customer id in the cookies
-        document.cookie = `customerId=${object.data.customerId}; ${secureCookieOptions}`;
+        document.cookie = `customerId=${object.data.customerId}; samesite=None; secure=true`;
 
         return object;
     } catch (error) {
